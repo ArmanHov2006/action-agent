@@ -8,10 +8,12 @@ import os
 import json
 import time
 from playwright.async_api import async_playwright
-from anthropic import AsyncAnthropic
+# from anthropic import AsyncAnthropic  # swapped to OpenAI for cost — uncomment to revert
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
-MODEL = "claude-haiku-4-5-20251001"  # cheapest — loop iteration model
+# MODEL = "claude-haiku-4-5-20251001"  # Anthropic loop model (kept for revert)
+MODEL = "gpt-4o-mini"  # ~6-8x cheaper than Haiku 4.5 for this loop
 
 SYSTEM = (
     "You are a web navigation agent. Respond ONLY with a valid JSON object. "
@@ -45,10 +47,10 @@ def clean_json_response(text):
 
 async def run_agent(goal, start_url, model=MODEL, max_turns=15):
     load_dotenv()
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not found in .env")
-    client = AsyncAnthropic(api_key=api_key.strip())
+        raise RuntimeError("OPENAI_API_KEY not found in .env")
+    client = AsyncOpenAI(api_key=api_key.strip())
 
     state = {
         "goal": goal,
@@ -80,21 +82,24 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15):
                 print(f"I am at: {current_url}")
 
                 try:
-                    response = await client.messages.create(
+                    response = await client.chat.completions.create(
                         model=model,
                         max_tokens=400,
-                        system=SYSTEM,
-                        messages=[{
-                            "role": "user",
-                            "content": (
-                                f"GOAL: {goal}\nURL: {current_url}\n"
-                                f"HISTORY: {json.dumps(state['history'][-3:])}\n"
-                                f"PAGE TEXT: {view}\n\nNext action?"
-                            ),
-                        }],
+                        response_format={"type": "json_object"},
+                        messages=[
+                            {"role": "system", "content": SYSTEM},
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"GOAL: {goal}\nURL: {current_url}\n"
+                                    f"HISTORY: {json.dumps(state['history'][-3:])}\n"
+                                    f"PAGE TEXT: {view}\n\nNext action?"
+                                ),
+                            },
+                        ],
                     )
 
-                    action_data = clean_json_response(response.content[0].text)
+                    action_data = clean_json_response(response.choices[0].message.content)
                     action = action_data.get("action")
                     arg = action_data.get("arg")
                     print(f"Plan: {action_data.get('why')}")
