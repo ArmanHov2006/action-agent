@@ -15,6 +15,10 @@ from dotenv import load_dotenv
 # MODEL = "claude-haiku-4-5-20251001"  # Anthropic loop model (kept for revert)
 MODEL = "gpt-4o-mini"  # ~6-8x cheaper than Haiku 4.5 for this loop
 
+# Stamp every run so the scorer can separate eval results by code version.
+# Bump this whenever loop logic changes (e.g. added the repeat-guard).
+CODE_VERSION = "v2-repeat-guard"
+
 SYSTEM = (
     "You are a web navigation agent. Respond ONLY with a valid JSON object. "
     "Do not include any conversational text.\n\n"
@@ -55,12 +59,14 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15):
     state = {
         "goal": goal,
         "model": model,
+        "code_version": CODE_VERSION,
         "start_url": start_url,
         "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "collected": [],
         "history": [],
         "outcome": "max_turns",  # overwritten to "done" if the agent finishes
     }
+    attempted = []
 
     try:
         async with async_playwright() as p:
@@ -105,6 +111,16 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15):
                     print(f"Plan: {action_data.get('why')}")
                     print(f"Action: {action}({arg})")
 
+
+                    sig = (action, arg)
+                    attempted.append(sig)
+                    repeats = attempted.count(sig)
+
+                    if repeats >= 3:
+                        print(f"Stuck: repeated {sig} {repeats}x. Breaking.")
+                        state["outcome"] = "stuck"   # or leave as max_turns
+                        break
+
                     if action == "navigate":
                         await page.goto(arg)
                     elif action == "click":
@@ -123,6 +139,7 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15):
                             break
                         else:
                             print("Goal not achieved.")
+
 
                     state["history"].append(action_data)
                     await asyncio.sleep(3)
