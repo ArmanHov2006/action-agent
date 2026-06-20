@@ -19,7 +19,7 @@ MODEL = "gpt-4o-mini"  # ~6-8x cheaper than Haiku 4.5 for this loop
 
 # Stamp every run so the scorer can separate eval results by code version.
 # Bump this whenever loop logic changes (e.g. added the repeat-guard).
-CODE_VERSION = "v4-block-failed-actions"
+CODE_VERSION = "v5-verify-before-done"
 
 SYSTEM = (
     "You are a web navigation agent. Respond ONLY with a valid JSON object. "
@@ -41,8 +41,43 @@ SYSTEM = (
     "Do NOT repeat the same selector. Add 'visible=true' (e.g. text='Running Shoes' >> visible=true) "
     "or make the text more specific instead.\n"
     "3. If a page says 'No results' or 'Sold out', try a different category.\n"
-    "4. Once you have the info the GOAL needs, you MUST use the 'done' action to end."
+    "4. Before 'done', make sure you have EXTRACTED every piece of info the GOAL "
+    "requires — including the EVIDENCE for any condition or numeric threshold "
+    "(e.g. if the goal needs >=200 reviews and >=4.5 stars, you must have extracted "
+    "the chosen item's actual review count AND star rating, not just its price). "
+    "Do NOT 'done' on a bare answer that lacks this evidence.\n"
+    "5. Once you have the info AND its evidence, use the 'done' action to end."
 )
+
+# v5: a generic self-verification gate. Before accepting 'done', ask the model
+# whether COLLECTED actually satisfies every requirement of the GOAL with explicit
+# evidence. Task-agnostic — the engine stays reusable; the goal supplies the rules.
+VERIFY_SYSTEM = (
+    "You verify whether a web agent has gathered enough to satisfy a goal. "
+    "Given the GOAL and what the agent COLLECTED, decide if EVERY requirement is met "
+    "with EXPLICIT evidence. Numeric thresholds (e.g. >=200 reviews, >=4.5 stars) "
+    "require the actual numbers to be present in COLLECTED. A bare price is NOT enough "
+    "when the goal also demands review/rating conditions.\n"
+    'Respond ONLY with JSON: {"satisfied": true|false, "missing": "<one sentence: '
+    'what evidence is still needed>"}.'
+)
+
+
+async def verify_goal_met(client, model, goal, collected):
+    """Return (satisfied: bool, missing: str). Self-critique before 'done'."""
+    answer = " | ".join(str(c) for c in collected)
+    resp = await client.chat.completions.create(
+        model=model,
+        max_tokens=200,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": VERIFY_SYSTEM},
+            {"role": "user", "content": f"GOAL:\n{goal}\n\nCOLLECTED:\n{answer}"},
+        ],
+    )
+    raw = clean_json_response(resp.choices[0].message.content)
+    return bool(raw.get("satisfied")), str(raw.get("missing", ""))[:200]
 
 
 def clean_json_response(text):
@@ -133,6 +168,12 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
                     action_data = clean_json_response(response.choices[0].message.content)
                     action = action_data.get("action")
                     arg = action_data.get("arg")
+                    # The model sometimes returns a structured arg (dict/list) — e.g.
+                    # an extract payload of {price, rating, review_count}. Normalize to
+                    # a string so it's hashable for the (action, arg) signature and
+                    # usable as collected evidence / a selector.
+                    if not isinstance(arg, str):
+                        arg = json.dumps(arg, ensure_ascii=False)
                     print(f"Plan: {action_data.get('why')}")
                     print(f"Action: {action}({arg})")
 
@@ -178,9 +219,23 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
                         print(f"Extracted: {arg}")
                     elif action == "done":
                         if state["collected"]:
-                            state["outcome"] = "done"
-                            print("Goal achieved!")
-                            break
+                            # v5 gate: don't trust the model's "done" — verify the
+                            # collected answer actually satisfies the goal's evidence.
+                            satisfied, missing = await verify_goal_met(
+                                client, model, goal, state["collected"])
+                            if satisfied:
+                                state["outcome"] = "done"
+                                print("Goal verified achieved!")
+                                break
+                            print(f"'done' rejected — still missing: {missing}")
+                            state["history"].append({
+                                "action": "verify_failed",
+                                "message": (f"NOT done yet. Missing: {missing} "
+                                            "Go extract that evidence (e.g. the chosen "
+                                            "item's review count AND star rating) before 'done'."),
+                            })
+                            await asyncio.sleep(1)
+                            continue
                         else:
                             print("Goal not achieved.")
 
