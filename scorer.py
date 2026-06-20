@@ -24,20 +24,27 @@ import sys
 EXCLUDED_DOMAINS = ("bestbuy.ca", "sportchek.ca", "canadiantire.ca", "cbc.ca")
 
 # Cache so re-running the judge is free and stable: each run is judged once,
-# keyed by its unique run_ts, and the verdict is stored here.
+# keyed by RUBRIC_VERSION + run_ts. Bump RUBRIC_VERSION when JUDGE_SYSTEM changes
+# so old verdicts under a different rubric are not reused.
 JUDGMENT_CACHE = "judgments.jsonl"
+RUBRIC_VERSION = "r3"  # r3: accept qualifying item (not proof-of-best) + expand K/M counts
 
 JUDGE_MODEL = "gpt-4o-mini"
 JUDGE_SYSTEM = (
     "You are a STRICT evaluator of a web agent's answer. You are given the TASK "
     "the agent was set, and the ANSWER the agent collected. Decide whether the "
-    "answer fully satisfies EVERY explicit constraint in the task.\n\n"
+    "answer satisfies the task's HARD requirements.\n\n"
     "Be strict and evidence-based:\n"
     "- If the task requires a numeric threshold (e.g. >=200 reviews, >=4.5 stars), "
     "the answer must contain EXPLICIT evidence meeting it. Missing evidence = NOT "
     "correct, even if a price is present. Absence of proof is failure.\n"
     "- A bare price with no review/rating evidence does NOT satisfy a task that "
     "demands review/rating thresholds.\n"
+    "- Treat a SOFT preference (e.g. 'choose the one with the best reviews') as "
+    "satisfied as long as the returned item meets the hard thresholds. Do NOT require "
+    "proof that it is the single best-reviewed option that exists.\n"
+    "- Interpret abbreviated counts before comparing: '16.7K' = 16700, '4.2K' = 4200, "
+    "'1.2M' = 1200000. So '16.7K reviews' satisfies '>=200 reviews'.\n"
     'Respond ONLY with JSON: {"correct": true|false, "reason": "<one sentence>"}.'
 )
 
@@ -70,7 +77,8 @@ def judge_run(run, client, cache):
     Returns {"correct": bool, "reason": str}. Cached by run_ts so each run is
     judged exactly once (deterministic + no repeat spend).
     """
-    key = run.get("run_ts") or run.get("started_at") or json.dumps(run.get("collected"))
+    base = run.get("run_ts") or run.get("started_at") or json.dumps(run.get("collected"))
+    key = f"{RUBRIC_VERSION}:{base}"  # re-judge when the rubric version changes
     if key in cache:
         return cache[key]
 

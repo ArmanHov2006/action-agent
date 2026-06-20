@@ -19,7 +19,7 @@ MODEL = "gpt-4o-mini"  # ~6-8x cheaper than Haiku 4.5 for this loop
 
 # Stamp every run so the scorer can separate eval results by code version.
 # Bump this whenever loop logic changes (e.g. added the repeat-guard).
-CODE_VERSION = "v5-verify-before-done"
+CODE_VERSION = "v6-converge-on-evidence"
 
 SYSTEM = (
     "You are a web navigation agent. Respond ONLY with a valid JSON object. "
@@ -41,12 +41,18 @@ SYSTEM = (
     "Do NOT repeat the same selector. Add 'visible=true' (e.g. text='Running Shoes' >> visible=true) "
     "or make the text more specific instead.\n"
     "3. If a page says 'No results' or 'Sold out', try a different category.\n"
+    "3b. SEARCH-RESULTS pages usually already show each item's price, star rating "
+    "AND review count in the PAGE TEXT. If the info the GOAL needs is already visible "
+    "there, EXTRACT it straight from the results — do NOT click into the product page. "
+    "Clicking individual product titles is slow and often fails; only click when the "
+    "needed info is genuinely not on the current page.\n"
     "4. Before 'done', make sure you have EXTRACTED every piece of info the GOAL "
     "requires — including the EVIDENCE for any condition or numeric threshold "
     "(e.g. if the goal needs >=200 reviews and >=4.5 stars, you must have extracted "
     "the chosen item's actual review count AND star rating, not just its price). "
-    "Do NOT 'done' on a bare answer that lacks this evidence.\n"
-    "5. Once you have the info AND its evidence, use the 'done' action to end."
+    "Extract ONE item that satisfies all the goal's conditions; do not re-extract the "
+    "same item. Do NOT 'done' on a bare answer that lacks this evidence.\n"
+    "5. Once you have ONE qualifying item with its price + evidence, use 'done' to end."
 )
 
 # v5: a generic self-verification gate. Before accepting 'done', ask the model
@@ -54,10 +60,16 @@ SYSTEM = (
 # evidence. Task-agnostic — the engine stays reusable; the goal supplies the rules.
 VERIFY_SYSTEM = (
     "You verify whether a web agent has gathered enough to satisfy a goal. "
-    "Given the GOAL and what the agent COLLECTED, decide if EVERY requirement is met "
-    "with EXPLICIT evidence. Numeric thresholds (e.g. >=200 reviews, >=4.5 stars) "
-    "require the actual numbers to be present in COLLECTED. A bare price is NOT enough "
-    "when the goal also demands review/rating conditions.\n"
+    "Given the GOAL and what the agent COLLECTED, decide if there is ONE item in "
+    "COLLECTED that meets every HARD condition of the goal with EXPLICIT evidence. "
+    "Numeric thresholds (e.g. >=200 reviews, >=4.5 stars) require the actual numbers "
+    "to be present and to satisfy the threshold. A bare price is NOT enough when the "
+    "goal also demands review/rating conditions.\n"
+    "Treat a soft preference like 'choose the best reviews' as satisfied as long as "
+    "the returned item meets the hard thresholds — do NOT require proof that it is the "
+    "single best-reviewed option in existence.\n"
+    "Interpret abbreviated counts before comparing: '16.7K' = 16700, '4.2K' = 4200, "
+    "'1.2M' = 1200000. So '16.7K reviews' easily satisfies '>=200 reviews'.\n"
     'Respond ONLY with JSON: {"satisfied": true|false, "missing": "<one sentence: '
     'what evidence is still needed>"}.'
 )
@@ -141,7 +153,7 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
                     page_text = await page.inner_text("body", timeout=10000)
                 except Exception:
                     page_text = "Could not read page content."
-                view = page_text[:4000]
+                view = page_text[:7000]  # v6: wider view so more result candidates are visible
                 print(f"I am at: {current_url}")
 
                 sig = None  # set when we parse an action; guards the except below
@@ -217,6 +229,30 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
                     elif action == "extract":
                         state["collected"].append(arg)
                         print(f"Extracted: {arg}")
+                        # v6: converge the moment the evidence is sufficient. The model
+                        # tends to find a qualifying item then re-extract it into the
+                        # repeat-guard instead of calling 'done'. So verify right here;
+                        # if the goal is satisfied, finish now.
+                        satisfied, missing = await verify_goal_met(
+                            client, model, goal, state["collected"])
+                        if satisfied:
+                            state["history"].append(action_data)
+                            state["outcome"] = "done"
+                            print("Goal satisfied on extract — done.")
+                            break
+                        # Not enough: feed the rejection back so the model stops
+                        # re-extracting the same losing item and moves to another.
+                        print(f"Not enough yet: {missing}")
+                        state["history"].append({
+                            "action": "insufficient",
+                            "extracted": arg,
+                            "message": (f"That item does NOT qualify: {missing} "
+                                        "Do NOT extract it again. Look at OTHER items in "
+                                        "the search results and extract a DIFFERENT one "
+                                        "that meets ALL the goal's thresholds."),
+                        })
+                        await asyncio.sleep(2)
+                        continue
                     elif action == "done":
                         if state["collected"]:
                             # v5 gate: don't trust the model's "done" — verify the
