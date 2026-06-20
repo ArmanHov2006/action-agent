@@ -16,3 +16,12 @@
 {"run_ts": "2026-06-20T11:53:07.500252+00:00", "correct": false, "reason": "The answer provides a price but lacks any evidence of reviews or ratings, which are required by the task."}
 {"run_ts": "2026-06-20T11:55:49.952995+00:00", "correct": false, "reason": "The answer does not meet the requirement of at least 200 reviews."}
 {"run_ts": "2026-06-20T11:56:42.165515+00:00", "correct": false, "reason": "The answer provides prices but lacks any evidence of reviews or ratings, which are required by the task."}
+{"run_ts": "2026-06-20T12:40:55.471531+00:00", "correct": false, "reason": "Neither option meets the requirement of at least 200 reviews."}
+{"run_ts": "2026-06-20T12:44:03.342526+00:00", "correct": false, "reason": "The answer does not provide a product with at least 200 reviews and a rating of 4.5 stars or higher."}
+{"run_ts": "2026-06-20T12:47:22.653699+00:00", "correct": false, "reason": "The answer does not meet the requirement of at least 200 reviews, as it only provides 62 reviews."}
+{"run_ts": "2026-06-20T12:49:36.454984+00:00", "correct": false, "reason": "The answer does not meet the requirement of having at least 200 reviews."}
+{"run_ts": "2026-06-20T12:50:58.794812+00:00", "correct": false, "reason": "The answer does not provide a product that meets the required threshold of at least 200 reviews and a rating of 4.5 stars or higher."}
+{"run_ts": "2026-06-20T12:53:22.885825+00:00", "correct": false, "reason": "The answer does not provide a product with at least 200 reviews, as the highest review count mentioned is 62."}
+{"run_ts": "2026-06-20T12:57:04.808577+00:00", "correct": false, "reason": "no answer collected"}
+{"run_ts": "2026-06-20T12:57:49.436323+00:00", "correct": false, "reason": "The answer does not meet the requirement of having at least 200 reviews, as it only has 62 reviews."}
+{"run_ts": "2026-06-20T13:03:22.444608+00:00", "correct": false, "reason": "The answer does not meet the requirement of having at least 200 reviews, as it only has 62."}
