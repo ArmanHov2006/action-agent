@@ -15,6 +15,7 @@ correctness.
 """
 import json
 import os
+import re
 import sys
 
 # Geo-blocked from Armenia (not a bot block) — agent can never reach these,
@@ -52,6 +53,80 @@ JUDGE_SYSTEM = (
 )
 
 
+def to_number(val):
+    """Parse a numeric value from a messy string: '16.7K'->16700, '1.2M'->1200000,
+    '$29.99'->29.99, '1,234'->1234, '4.5 stars'->4.5. Returns float or None."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().lower().replace(",", "").replace("$", "")
+    m = re.search(r"(\d+(?:\.\d+)?)\s*([km])?", s)
+    if not m:
+        return None
+    num = float(m.group(1))
+    suffix = m.group(2)
+    if suffix == "k":
+        num *= 1_000
+    elif suffix == "m":
+        num *= 1_000_000
+    return num
+
+
+def _find_threshold(goal, keyword):
+    """Find the numeric threshold tied to `keyword` in the goal (e.g. the 200 in
+    '>=200 reviews' / '200+ reviews' / 'at least 200 reviews', or the 4.5 in
+    '4.5 stars' / 'rating of at least 4.5'). Returns float or None."""
+    g = goal.lower()
+    # number immediately before the keyword: "200+ reviews", ">=4.5 stars"
+    m = re.search(rf"(\d+(?:\.\d+)?\s*[km]?)\s*\+?\s*{keyword}", g)
+    if m:
+        return to_number(m.group(1))
+    # number shortly after the keyword: "reviews >= 200", "rating of 4.5"
+    m = re.search(rf"{keyword}[^\d]{{0,12}}(\d+(?:\.\d+)?\s*[km]?)", g)
+    if m:
+        return to_number(m.group(1))
+    return None
+
+
+def parse_thresholds(goal):
+    """Pull HARD numeric thresholds out of a goal. Only the unambiguous keywords:
+    'reviews' -> review_count, 'stars' -> rating. Returns {field: min_value}."""
+    g = (goal or "").lower()
+    thr = {}
+    rev = _find_threshold(g, "reviews")
+    if rev is not None:
+        thr["review_count"] = rev
+    rat = _find_threshold(g, "stars")
+    if rat is not None:
+        thr["rating"] = rat
+    return thr
+
+
+def extract_fields(collected):
+    """Pull price/rating/review_count numbers out of collected items. Prefers the
+    structured JSON object the agent now emits (v7); silently skips prose items."""
+    fields = {}
+    for c in collected:
+        obj = c if isinstance(c, dict) else None
+        if obj is None and isinstance(c, str) and c.strip().startswith("{"):
+            try:
+                obj = json.loads(c)
+            except Exception:
+                obj = None
+        if not isinstance(obj, dict):
+            continue
+        for k, v in obj.items():
+            kl = k.lower()
+            if "review" in kl and "review_count" not in fields:
+                fields["review_count"] = to_number(v)
+            elif ("rating" in kl or "star" in kl) and "rating" not in fields:
+                fields["rating"] = to_number(v)
+            elif "price" in kl and "price" not in fields:
+                fields["price"] = to_number(v)
+    return fields
+
+
 def score_run(run):
     """LAYER 1 — the stop metric. Did the agent stop claiming success?"""
     collected = run.get("collected", []) or []
@@ -86,28 +161,45 @@ def judge_run(run, client, cache):
         return cache[key]
 
     collected = run.get("collected", []) or []
-    if not collected:
-        verdict = {"correct": False, "reason": "no answer collected"}
-    else:
-        answer = " | ".join(str(c) for c in collected)
-        resp = client.chat.completions.create(
-            model=JUDGE_MODEL,
-            temperature=0,                       # deterministic verdicts
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": JUDGE_SYSTEM},
-                {"role": "user", "content": f"TASK:\n{run.get('goal','')}\n\nANSWER:\n{answer}"},
-            ],
-        )
-        raw = json.loads(resp.choices[0].message.content)
-        verdict = {"correct": bool(raw.get("correct")), "reason": str(raw.get("reason", ""))[:200]}
 
-    # Persist to cache.
-    record = {"run_ts": key, **verdict}
-    with open(JUDGMENT_CACHE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
-    cache[key] = verdict
-    return verdict
+    def _persist(verdict):
+        record = {"run_ts": key, **verdict}
+        with open(JUDGMENT_CACHE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+        cache[key] = verdict
+        return verdict
+
+    if not collected:
+        return _persist({"correct": False, "reason": "no answer collected"})
+
+    # Cheap deterministic gate FIRST. If the goal states numeric thresholds,
+    # parse them, pull the structured fields, compare in Python, and fail fast on
+    # a miss — no API spend. The LLM is only needed for the subjective remainder.
+    thresholds = parse_thresholds(run.get("goal", ""))
+    if thresholds:
+        fields = extract_fields(collected)
+        for name, minval in thresholds.items():
+            got = fields.get(name)
+            if got is None:
+                return _persist({"correct": False,
+                                 "reason": f"no {name} evidence for >={minval:g} threshold"})
+            if got < minval:
+                return _persist({"correct": False,
+                                 "reason": f"{name} {got:g} < required {minval:g}"})
+
+    # Numeric checks passed (or none present) -> LLM judges the subjective part.
+    answer = " | ".join(str(c) for c in collected)
+    resp = client.chat.completions.create(
+        model=JUDGE_MODEL,
+        temperature=0,                       # deterministic verdicts
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": f"TASK:\n{run.get('goal','')}\n\nANSWER:\n{answer}"},
+        ],
+    )
+    raw = json.loads(resp.choices[0].message.content)
+    return _persist({"correct": bool(raw.get("correct")), "reason": str(raw.get("reason", ""))[:200]})
 
 
 def main():

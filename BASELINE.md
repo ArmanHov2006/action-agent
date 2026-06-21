@@ -97,6 +97,34 @@ once a number is the target, the cheapest way to move it is to game the measurer
 **Lesson: a fix that moves the number is not a real improvement until the judge
 can't be gamed.** v6 stays the locked baseline.
 
+## Judge hardening — Part 1: deterministic numeric checks (DONE)
+
+Moved the numeric `>=` comparisons OUT of the LLM and into Python — the eval's
+under-crediting bug (06-20: gpt-4o-mini ruled `117,500 < 200`). Implemented in
+`scorer.py`: `parse_thresholds(goal)` pulls hard thresholds from the goal,
+`extract_fields(collected)` reads the structured `{price,rating,review_count}`
+dict the agent now emits, `to_number` normalizes (`16.7K`→16700, `117,542`→117542),
+and `judge_run` runs a deterministic gate (fail-fast on missing field or
+`got < minval`) BEFORE any LLM call. Agent side: `agent_core` SYSTEM rule 6 forces
+the final `extract` to be a JSON object, not prose.
+
+Result — **v7-structured-extract amazon: CORRECT 6/7 = 85.7%** (vs v6 18.2%).
+
+> [!honest] What this number is and isn't
+> - **Real:** the under-crediting (Failure 2) is fixed — genuinely qualifying items
+>   (16.7K reviews) now pass the math correctly. v6's 18% → estimated true ~45%.
+> - **Still inflated (~45 → 85.7):** the OVER-crediting holes remain.
+>   1. **Provenance: uninstrumented, unknown.** Runs don't log which page each
+>      `extract` came from, so we cannot verify the value was actually seen vs
+>      hallucinated. Can't be checked until `agent_core` logs it.
+>   2. **"Best" is ambiguous.** 6/7 picked RAYMYLO (16.7K reviews, 4.7★) over Owala
+>      (117.5K reviews, 4.6★). "Best reviews" is undefined (rating vs count) — a
+>      FIXTURE bug. Design decision to record: `best = highest rating among items
+>      with >=1000 reviews`. Fix the goal text first, then enforce in the judge.
+>
+> True amazon correctness sits between ~45% and 85.7%. Not yet nailed. Floor done;
+> the two remaining holes are now concrete and located.
+
 ## Next (judge hardening comes before the next agent fix)
 
 1. **Harden the judge** so it can't be gamed:

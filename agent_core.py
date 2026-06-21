@@ -19,7 +19,7 @@ MODEL = "gpt-4o-mini"  # ~6-8x cheaper than Haiku 4.5 for this loop
 
 # Stamp every run so the scorer can separate eval results by code version.
 # Bump this whenever loop logic changes (e.g. added the repeat-guard).
-CODE_VERSION = "v6-converge-on-evidence"
+CODE_VERSION = "v7-structured-extract"
 
 SYSTEM = (
     "You are a web navigation agent. Respond ONLY with a valid JSON object. "
@@ -52,7 +52,11 @@ SYSTEM = (
     "the chosen item's actual review count AND star rating, not just its price). "
     "Extract ONE item that satisfies all the goal's conditions; do not re-extract the "
     "same item. Do NOT 'done' on a bare answer that lacks this evidence.\n"
-    "5. Once you have ONE qualifying item with its price + evidence, use 'done' to end."
+    "5. Once you have ONE qualifying item with its price + evidence, use 'done' to end.\n"
+    "6. The FINAL 'extract' (the one that satisfies the goal) MUST set arg to a JSON "
+    'object, not a sentence: {"price": "...", "rating": "...", "review_count": "..."}. '
+    "Use the actual values you read from the page; omit a key only if the goal does not "
+    "require it. Do NOT wrap the numbers in prose."
 )
 
 # v5: a generic self-verification gate. Before accepting 'done', ask the model
