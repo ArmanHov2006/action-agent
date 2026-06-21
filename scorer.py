@@ -21,7 +21,10 @@ import sys
 # so they are invalid fixtures, not agent failures. Excluded from the rate,
 # reported separately. Match against start_url. Confirmed 2026-06-20: all four
 # Canadian sites time out on page.goto (net unreachable); only amazon.ca loads.
-EXCLUDED_DOMAINS = ("bestbuy.ca", "sportchek.ca", "canadiantire.ca", "cbc.ca")
+# Only EXCLUDE truly-invalid fixtures (unreachable), not sites the agent fails on.
+# bestbuy.ca is geo-blocked from Armenia -> can't run -> invalid fixture, excluded.
+# A site the agent reaches but gets wrong is a REAL failure and must stay scored.
+EXCLUDED_DOMAINS = ("bestbuy.ca",)
 
 # Cache so re-running the judge is free and stable: each run is judged once,
 # keyed by RUBRIC_VERSION + run_ts. Bump RUBRIC_VERSION when JUDGE_SYSTEM changes
@@ -138,6 +141,18 @@ def main():
 
             start_url = run.get("start_url", "")
             if any(d in start_url for d in EXCLUDED_DOMAINS):
+                excluded_n += 1
+                continue
+
+            # Infra noise != wrong answer. A run that crashed because the PAGE
+            # never loaded (Page.goto timeout) is unreachable-this-time, same as
+            # bestbuy -> exclude, don't score it against the agent. Scoped to
+            # initial-navigation crashes so an agent-caused mid-run crash still
+            # counts as a real failure.
+            if run.get("outcome") == "crashed" and any(
+                a.get("action") == "crash" and "Page.goto" in (a.get("message") or "")
+                for a in (run.get("history") or [])
+            ):
                 excluded_n += 1
                 continue
 
