@@ -15,6 +15,31 @@ on the same fixtures.
 | Lying gap | 35.2pp | Runs the agent thought it nailed but got wrong. The core failure mode. |
 | Excluded | 14 | Infra-invalid runs, not scored (see methodology). |
 
+## r4 measurement (2026-06-22 · provenance gate · judge rubric r4)
+
+NOT a replacement for the locked r3 line above — a **new measurement under a
+stricter judge**. r4 fails any threshold value with no `source_url` or an
+off-domain one (see `Action Agent — The Provenance Gate (06-22)` note).
+
+| Metric | r3 (locked) | r4 (provenance) | Read |
+|---|---|---|---|
+| CORRECT rate | 18.5% (10/54) | **12.0% (9/75)** | Dropped — gate removed unverifiable wins. Honesty, not regression. |
+| STOP rate | 53.7% | 62.7% (47/75) | — |
+| Lying gap | 35.2pp | 50.7pp | Wider: many STOP-success runs now fail provenance. |
+
+**The signal is in the per-version split, not the headline:**
+
+| Version | amazon CORRECT | Why |
+|---|---|---|
+| v7-structured-extract | 85.7% → **0.0%** | Pre-`source_url` runs — no provenance → all fail the gate. The 85.7% was the fake. |
+| **v8-source-url** | **60.0% (3/5)** | The only runs that actually carry provenance. The real forward number. |
+
+> [!honest] What 12.0% is and isn't
+> Legacy runs (v3–v7) have no `source_url`, so r4 fails them wholesale — that
+> deflates the overall rate but is *correct*: an unprovenanced number isn't a
+> verified win. Judge v8-only and provenance-true correctness is **~60%**. The
+> gate still misses same-domain homepage hallucination (floor, not finish).
+
 ## What counts (methodology — why these numbers are trustworthy)
 
 The denominator is honest in **both** directions. Two corrections were made to

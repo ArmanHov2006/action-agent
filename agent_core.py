@@ -19,7 +19,7 @@ MODEL = "gpt-4o-mini"  # ~6-8x cheaper than Haiku 4.5 for this loop
 
 # Stamp every run so the scorer can separate eval results by code version.
 # Bump this whenever loop logic changes (e.g. added the repeat-guard).
-CODE_VERSION = "v7-structured-extract"
+CODE_VERSION = "v8-source-url"
 
 SYSTEM = (
     "You are a web navigation agent. Respond ONLY with a valid JSON object. "
@@ -231,7 +231,22 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
                         await page.fill(selector.strip(), text.strip(), timeout=10000)
                         await page.press(selector.strip(), "Enter")
                     elif action == "extract":
-                        state["collected"].append(arg)
+                        # Every extract carries provenance. Dicts (the structured
+                        # {price,rating,review_count} payload) get source_url added in
+                        # place so scorer.extract_fields still sees those keys; prose /
+                        # list extracts are wrapped so they're never unprovenanced.
+                        try:
+                            parsed_arg = json.loads(arg)
+                            if isinstance(parsed_arg, dict):
+                                parsed_arg["source_url"] = current_url
+                                state["collected"].append(parsed_arg)
+                            else:
+                                state["collected"].append(
+                                    {"value": parsed_arg, "source_url": current_url})
+                        except json.JSONDecodeError:
+                            state["collected"].append(
+                                {"value": arg, "source_url": current_url})
+                            print(f"Failed to parse extracted argument: {arg}")
                         print(f"Extracted: {arg}")
                         # v6: converge the moment the evidence is sufficient. The model
                         # tends to find a qualifying item then re-extract it into the

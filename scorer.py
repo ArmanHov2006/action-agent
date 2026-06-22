@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+from urllib.parse import urlparse
 
 # Geo-blocked from Armenia (not a bot block) — agent can never reach these,
 # so they are invalid fixtures, not agent failures. Excluded from the rate,
@@ -31,7 +32,7 @@ EXCLUDED_DOMAINS = ("bestbuy.ca",)
 # keyed by RUBRIC_VERSION + run_ts. Bump RUBRIC_VERSION when JUDGE_SYSTEM changes
 # so old verdicts under a different rubric are not reused.
 JUDGMENT_CACHE = "judgments.jsonl"
-RUBRIC_VERSION = "r3"  # r3: accept qualifying item (not proof-of-best) + expand K/M counts
+RUBRIC_VERSION = "r4"  # r4: provenance gate — threshold evidence must carry a same-domain source_url
 
 JUDGE_MODEL = "gpt-4o-mini"
 JUDGE_SYSTEM = (
@@ -103,10 +104,14 @@ def parse_thresholds(goal):
     return thr
 
 
-def extract_fields(collected):
-    """Pull price/rating/review_count numbers out of collected items. Prefers the
-    structured JSON object the agent now emits (v7); silently skips prose items."""
-    fields = {}
+def extract_fields_and_sources(collected):
+    """Pull price/rating/review_count numbers out of collected items, AND record the
+    source_url of the item each field was read from. Prefers the structured JSON
+    object the agent now emits (v7); silently skips prose items.
+
+    Returns (fields, sources) where sources[name] = the source_url string of the
+    item that supplied fields[name] (None if that item carried no provenance)."""
+    fields, sources = {}, {}
     for c in collected:
         obj = c if isinstance(c, dict) else None
         if obj is None and isinstance(c, str) and c.strip().startswith("{"):
@@ -116,15 +121,33 @@ def extract_fields(collected):
                 obj = None
         if not isinstance(obj, dict):
             continue
+        src = obj.get("source_url")
         for k, v in obj.items():
             kl = k.lower()
-            if "review" in kl and "review_count" not in fields:
-                fields["review_count"] = to_number(v)
+            if "review" in kl and "source" not in kl and "review_count" not in fields:
+                fields["review_count"] = to_number(v); sources["review_count"] = src
             elif ("rating" in kl or "star" in kl) and "rating" not in fields:
-                fields["rating"] = to_number(v)
+                fields["rating"] = to_number(v); sources["rating"] = src
             elif "price" in kl and "price" not in fields:
-                fields["price"] = to_number(v)
-    return fields
+                fields["price"] = to_number(v); sources["price"] = src
+    return fields, sources
+
+
+def extract_fields(collected):
+    """Back-compat thin wrapper — fields only."""
+    return extract_fields_and_sources(collected)[0]
+
+
+def _domain(url):
+    """Registrable-ish domain: last two labels of the netloc, lowercased.
+    'https://www.amazon.ca/dp/x' -> 'amazon.ca'. Empty string if unparseable."""
+    try:
+        host = urlparse(url or "").netloc.lower()
+    except Exception:
+        return ""
+    host = host.split("@")[-1].split(":")[0]  # strip auth + port
+    labels = [l for l in host.split(".") if l]
+    return ".".join(labels[-2:]) if len(labels) >= 2 else host
 
 
 def score_run(run):
@@ -177,7 +200,8 @@ def judge_run(run, client, cache):
     # a miss — no API spend. The LLM is only needed for the subjective remainder.
     thresholds = parse_thresholds(run.get("goal", ""))
     if thresholds:
-        fields = extract_fields(collected)
+        fields, sources = extract_fields_and_sources(collected)
+        target_domain = _domain(run.get("start_url", ""))
         for name, minval in thresholds.items():
             got = fields.get(name)
             if got is None:
@@ -186,6 +210,20 @@ def judge_run(run, client, cache):
             if got < minval:
                 return _persist({"correct": False,
                                  "reason": f"{name} {got:g} < required {minval:g}"})
+            # Provenance gate (r4): a threshold value is only trustworthy if it was
+            # read off a page on the task's own site. No source_url => unprovenanced
+            # (older runs, or prose the agent invented). Off-domain => read from the
+            # wrong place. Either way the number is not evidence the goal was met.
+            # NOTE — what this does NOT prove: that `got` literally appeared on that
+            # page (right-site/right-page but wrong-number stays uncaught until the
+            # agent logs the page text it read from). Holes named, not hidden.
+            src = sources.get(name)
+            if not src:
+                return _persist({"correct": False,
+                                 "reason": f"{name}={got:g} has no source_url — unprovenanced"})
+            if target_domain and _domain(src) != target_domain:
+                return _persist({"correct": False,
+                                 "reason": f"{name} read from {_domain(src)}, not task site {target_domain}"})
 
     # Numeric checks passed (or none present) -> LLM judges the subjective part.
     answer = " | ".join(str(c) for c in collected)
