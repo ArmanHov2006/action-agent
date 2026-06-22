@@ -32,7 +32,7 @@ EXCLUDED_DOMAINS = ("bestbuy.ca",)
 # keyed by RUBRIC_VERSION + run_ts. Bump RUBRIC_VERSION when JUDGE_SYSTEM changes
 # so old verdicts under a different rubric are not reused.
 JUDGMENT_CACHE = "judgments.jsonl"
-RUBRIC_VERSION = "r4"  # r4: provenance gate — threshold evidence must carry a same-domain source_url
+RUBRIC_VERSION = "r5"  # r5: commitment gate — non-done runs can't be CORRECT
 
 JUDGE_MODEL = "gpt-4o-mini"
 JUDGE_SYSTEM = (
@@ -194,6 +194,10 @@ def judge_run(run, client, cache):
 
     if not collected:
         return _persist({"correct": False, "reason": "no answer collected"})
+
+    if run.get("outcome") != "done":
+          return _persist({"correct": False,
+                           "reason": f"no committed pick (outcome={run.get('outcome')})"})
 
     # Cheap deterministic gate FIRST. If the goal states numeric thresholds,
     # parse them, pull the structured fields, compare in Python, and fail fast on

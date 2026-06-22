@@ -15,17 +15,31 @@ on the same fixtures.
 | Lying gap | 35.2pp | Runs the agent thought it nailed but got wrong. The core failure mode. |
 | Excluded | 14 | Infra-invalid runs, not scored (see methodology). |
 
-## r4 measurement (2026-06-22 · provenance gate · judge rubric r4)
+## r4/r5 measurement (2026-06-22 · provenance + commitment gates)
 
-NOT a replacement for the locked r3 line above — a **new measurement under a
+NOT a replacement for the locked r3 line above — **new measurements under a
 stricter judge**. r4 fails any threshold value with no `source_url` or an
-off-domain one (see `Action Agent — The Provenance Gate (06-22)` note).
+off-domain one; r5 also fails any non-`done` run (no committed pick). See
+`Action Agent — The Provenance Gate (06-22)` note.
 
-| Metric | r3 (locked) | r4 (provenance) | Read |
-|---|---|---|---|
-| CORRECT rate | 18.5% (10/54) | **12.0% (9/75)** | Dropped — gate removed unverifiable wins. Honesty, not regression. |
-| STOP rate | 53.7% | 62.7% (47/75) | — |
-| Lying gap | 35.2pp | 50.7pp | Wider: many STOP-success runs now fail provenance. |
+| Metric | r3 (locked) | r4 (provenance) | r5 (+commitment) | Read |
+|---|---|---|---|---|
+| CORRECT rate | 18.5% (10/54) | 12.0% (9/75) | **13.3% (10/75)** | Gate didn't raise it (a gate only adds fails). The +1 is judge re-judge noise — see below. |
+| STOP rate | 53.7% | 62.7% | 62.7% (47/75) | — |
+| Lying gap | 35.2pp | 50.7pp | 49.3pp | — |
+
+> [!warning] The r5 +1 is judge NOISE, not the gate
+> A commitment gate can only *add* fails (non-`done` → WRONG); it can never
+> create a CORRECT. The 9→10 came from `v3-modal-dismiss` flipping **3→4
+> correct** when the r4→r5 cache wipe forced a re-judge — the same `gpt-4o-mini`
+> judge gave a different verdict on a `done` run at `temperature=0`. **The judge
+> is not deterministic across re-judges.** The verdict cache isn't just a cost
+> optimization — it's what keeps the metric *stable*. Bumping the rubric
+> re-rolls every run.
+>
+> The gate's real value here is a **guardrail against future over-credit** (a
+> stuck list whose item[0] qualifies can no longer pass), proven by a synthetic
+> trap test — not a move in today's number.
 
 **The signal is in the per-version split, not the headline:**
 
