@@ -3,3 +3,4 @@ uvicorn[standard]
 playwright
 openai
 python-dotenv
+psycopg[binary]
