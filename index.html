@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Action Agent</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    input, button { font-size: 1rem; padding: .5rem; margin: .25rem 0; width: 100%; box-sizing: border-box; }
+    button { width: auto; cursor: pointer; }
+    #trace { margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Action Agent</h1>
+
+  <form id="run-form">
+    <input name="goal" placeholder="goal (e.g. find cheapest X)" required>
+    <input name="start_url" placeholder="https://..." required>
+    <input name="api_key" type="password" placeholder="API key" required>
+    <button type="submit">Run</button>
+  </form>
+
+  <div id="trace"></div>
+
+  <script>
+    const form = document.getElementById("run-form");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();                    // stop the native form post
+      const f = new FormData(form);
+      const trace = document.getElementById("trace");
+      trace.textContent = "running…";
+      const res = await fetch("/run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": f.get("api_key"),     // header, not body
+        },
+        body: JSON.stringify({
+          goal: f.get("goal"),
+          start_url: f.get("start_url"),
+        }),
+      });
+      // task 4: /run returns HTML of the trace -> inject it
+      trace.innerHTML = await res.text();
+    });
+  </script>
+</body>
+</html>

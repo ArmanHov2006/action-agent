@@ -19,3 +19,25 @@ def save_run(state):
                 json.dumps(state["history"]),
             ),
         )
+
+def init_db():
+    url = os.environ["DATABASE_URL"]
+    with psycopg.connect(url) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS runs (
+                id          BIGSERIAL PRIMARY KEY,
+                run_ts      TEXT,
+                goal        TEXT,
+                start_url   TEXT,
+                outcome     TEXT,
+                code_version TEXT,
+                turns_used  INTEGER,
+                collected   TEXT,
+                history     TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_runs_run_ts
+            ON runs (run_ts)
+        """)
+

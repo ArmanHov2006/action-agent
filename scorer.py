@@ -28,6 +28,18 @@ from urllib.parse import urlparse
 # A site the agent reaches but gets wrong is a REAL failure and must stay scored.
 EXCLUDED_DOMAINS = ("bestbuy.ca",)
 
+# Qualitative claims the floor gate checks. Extend as new fixture goals are added.
+# Goodhart warning: agent can stuff these words into collected strings to game the gate.
+# Vision eval (Week 2) closes that gap. For now: cheap string presence = floor.
+QUALITATIVE_KEYWORDS = {
+    # colors (from sportchek black-shoe fixture)
+    "black", "white", "red", "blue", "green", "grey", "gray", "pink", "yellow",
+    # materials (from amazon stainless-steel fixture)
+    "stainless steel", "leather", "waterproof", "mesh", "synthetic",
+    # type attributes (from canadiantire cordless fixture)
+    "cordless", "wireless", "portable", "rechargeable",
+}
+
 # Cache so re-running the judge is free and stable: each run is judged once,
 # keyed by RUBRIC_VERSION + run_ts. Bump RUBRIC_VERSION when JUDGE_SYSTEM changes
 # so old verdicts under a different rubric are not reused.
@@ -156,7 +168,10 @@ def score_run(run):
     outcome = run.get("outcome")
     passed = outcome == "done" and len(collected) > 0
     wasted = (outcome == "done" and not collected) or outcome == "max_turns"
-    return {"passed": passed, "turns_used": run.get("turns_used"), "wasted": wasted}
+    goal = run.get("goal", "")
+    has_claim = any(kw in goal.lower() for kw in QUALITATIVE_KEYWORDS)
+    assertion = assertion_in_evidence(goal, collected) if has_claim else None
+    return {"passed": passed, "turns_used": run.get("turns_used"), "wasted": wasted, "assertion": assertion}
 
 
 def load_judgments():
@@ -333,6 +348,15 @@ def main():
         else:
             print(f"  {version:<26} {task_id:<16} {sp:>4} {tt:>6}   stop={sp/tt*100:>5.1f}%")
 
+
+def assertion_in_evidence(goal: str, collected: list[str]) -> bool:
+    for keyword in QUALITATIVE_KEYWORDS:
+        if keyword in goal.lower():
+            if any(keyword in str(e).lower() for e in collected):
+                return True
+            else:
+                return False
+    return True
 
 if __name__ == "__main__":
     main()
