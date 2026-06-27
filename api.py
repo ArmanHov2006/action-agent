@@ -31,7 +31,7 @@ app = FastAPI()
 RATE_LIMIT = 5        # max requests
 WINDOW_SEC = 60       # per this many seconds, per IP
 _hits: dict[str, list[float]] = {}   # ip -> list of request timestamps
-Qualitative_keywords
+
 
 def render_run(state: dict) -> str:
     """Render a finished run as HTML.
