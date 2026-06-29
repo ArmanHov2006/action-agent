@@ -350,13 +350,13 @@ def main():
 
 
 def assertion_in_evidence(goal: str, collected: list[str]) -> bool:
-    for keyword in QUALITATIVE_KEYWORDS:
-        if keyword in goal.lower():
-            if any(keyword in str(e).lower() for e in collected):
-                return True
-            else:
-                return False
-    return True
+    claims = [ kw for kw in QUALITATIVE_KEYWORDS if _has(kw, goal) ]
+    if not claims:
+        return True
+    return all(_has(kw, collected) for kw in claims)
+
+def _has(word, text):
+    return re.search(rf"\b{re.escape(word)}\b", str(text).lower()) is not None
 
 if __name__ == "__main__":
     main()

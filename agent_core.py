@@ -13,13 +13,13 @@ from playwright.async_api import async_playwright
 # from anthropic import AsyncAnthropic  # swapped to OpenAI for cost — uncomment to revert
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
-
+from scorer import QUALITATIVE_KEYWORDS, assertion_in_evidence
 # MODEL = "claude-haiku-4-5-20251001"  # Anthropic loop model (kept for revert)
 MODEL = "gpt-4o-mini"  # ~6-8x cheaper than Haiku 4.5 for this loop
 
 # Stamp every run so the scorer can separate eval results by code version.
 # Bump this whenever loop logic changes (e.g. added the repeat-guard).
-CODE_VERSION = "v8-source-url"
+CODE_VERSION = "v9-qualitative-gate"
 
 SYSTEM = (
     "You are a web navigation agent. Respond ONLY with a valid JSON object. "
@@ -252,6 +252,19 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
                         # tends to find a qualifying item then re-extract it into the
                         # repeat-guard instead of calling 'done'. So verify right here;
                         # if the goal is satisfied, finish now.
+
+                        if not assertion_in_evidence(goal, state["collected"]):
+                            print("Extracted item does NOT satisfy the goal's conditions yet.")
+                            state["history"].append({
+                                "action": "assertion_failed",
+                                "extracted": arg,
+                                "message": "Qualitative claim not confirmed in evidence. "
+                                           "Apply the site's filter (e.g. ?color=Black in the URL) "
+                                           "before extracting. Do NOT extract a product whose name "
+                                           "does not explicitly contain the required attribute.",
+                            })
+                            await asyncio.sleep(2)
+                            continue
                         satisfied, missing = await verify_goal_met(
                             client, model, goal, state["collected"])
                         if satisfied:
