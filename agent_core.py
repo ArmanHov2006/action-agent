@@ -135,11 +135,11 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=True, args=["--ignore-certificate-errors"])
             page = await browser.new_page()
             print(f"GOAL: {goal}")
             print(f"Navigating to {start_url} ...")
-            await page.goto(start_url)
+            await page.goto(start_url, timeout=60000)
             await asyncio.sleep(5)
 
             for i in range(max_turns):
@@ -219,16 +219,16 @@ async def run_agent(goal, start_url, model=MODEL, max_turns=15, task_id=None):
                         break
 
                     if action == "navigate":
-                        await page.goto(arg)
+                        await page.goto(arg, timeout=60000)
                     elif action == "click":
                         try:
-                            await page.click(arg, timeout=10000)
+                            await page.click(arg, timeout=20000)
                         except Exception:
                             print("Click failed, retrying on first visible match...")
-                            await page.locator(arg).locator("visible=true").first.click(timeout=10000)
+                            await page.locator(arg).locator("visible=true").first.click(timeout=20000)
                     elif action == "type":
                         selector, _, text = arg.partition("::")
-                        await page.fill(selector.strip(), text.strip(), timeout=10000)
+                        await page.fill(selector.strip(), text.strip(), timeout=20000)
                         await page.press(selector.strip(), "Enter")
                     elif action == "extract":
                         # Every extract carries provenance. Dicts (the structured
