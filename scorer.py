@@ -44,7 +44,7 @@ QUALITATIVE_KEYWORDS = {
 # keyed by RUBRIC_VERSION + run_ts. Bump RUBRIC_VERSION when JUDGE_SYSTEM changes
 # so old verdicts under a different rubric are not reused.
 JUDGMENT_CACHE = "judgments.jsonl"
-RUBRIC_VERSION = "r5"  # r5: commitment gate — non-done runs can't be CORRECT
+RUBRIC_VERSION = "r6"  # r6: unpack list-of-dicts under "value" key in collected
 
 JUDGE_MODEL = "gpt-4o-mini"
 JUDGE_SYSTEM = (
@@ -124,6 +124,17 @@ def extract_fields_and_sources(collected):
     Returns (fields, sources) where sources[name] = the source_url string of the
     item that supplied fields[name] (None if that item carried no provenance)."""
     fields, sources = {}, {}
+
+    def _extract_obj(obj, src):
+        for k, v in obj.items():
+            kl = k.lower()
+            if "review" in kl and "source" not in kl and "review_count" not in fields:
+                fields["review_count"] = to_number(v); sources["review_count"] = src
+            elif ("rating" in kl or "star" in kl) and "rating" not in fields:
+                fields["rating"] = to_number(v); sources["rating"] = src
+            elif "price" in kl and "price" not in fields:
+                fields["price"] = to_number(v); sources["price"] = src
+
     for c in collected:
         obj = c if isinstance(c, dict) else None
         if obj is None and isinstance(c, str) and c.strip().startswith("{"):
@@ -134,14 +145,16 @@ def extract_fields_and_sources(collected):
         if not isinstance(obj, dict):
             continue
         src = obj.get("source_url")
-        for k, v in obj.items():
-            kl = k.lower()
-            if "review" in kl and "source" not in kl and "review_count" not in fields:
-                fields["review_count"] = to_number(v); sources["review_count"] = src
-            elif ("rating" in kl or "star" in kl) and "rating" not in fields:
-                fields["rating"] = to_number(v); sources["rating"] = src
-            elif "price" in kl and "price" not in fields:
-                fields["price"] = to_number(v); sources["price"] = src
+        # Agent sometimes wraps a list of items under a "value" key.
+        # Unpack it and treat each sub-item as a separate candidate.
+        inner = obj.get("value")
+        if isinstance(inner, list):
+            for sub in inner:
+                if isinstance(sub, dict):
+                    _extract_obj(sub, src)
+        else:
+            _extract_obj(obj, src)
+
     return fields, sources
 
 
